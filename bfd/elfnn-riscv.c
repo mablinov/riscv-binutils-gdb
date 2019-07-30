@@ -2710,7 +2710,7 @@ riscv_version_mismatch (bfd *ibfd,
 			struct riscv_subset_t *out)
 {
   _bfd_error_handler
-    (_("error: %pB: Mis-matched ISA version for '%s' exetension. "
+    (_("error: %pB: Mis-matched ISA version for '%s' extension. "
        "%d.%d vs %d.%d"),
        ibfd, in->name,
        in->major_version, in->minor_version,
