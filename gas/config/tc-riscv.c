@@ -59,11 +59,16 @@ struct riscv_cl_insn
 #define DEFAULT_ARCH "riscv64"
 #endif
 
+#ifndef DEFAULT_ISA_VER
+#define DEFAULT_ISA_VER "2.2"
+#endif
+
 #ifndef DEFAULT_RISCV_ATTR
 #define DEFAULT_RISCV_ATTR 0
 #endif
 
 static const char default_arch[] = DEFAULT_ARCH;
+static const char default_isa_ver[] = DEFAULT_ISA_VER;
 
 static unsigned xlen = 0; /* width of an x-register */
 static unsigned abi_xlen = 0; /* width of a pointer in the ABI */
@@ -110,6 +115,7 @@ riscv_set_rve (bfd_boolean rve_value)
 }
 
 static riscv_subset_list_t riscv_subsets;
+static riscv_isa_ver_t riscv_isa_ver;
 
 static bfd_boolean
 riscv_subset_supports (const char *feature)
@@ -139,11 +145,24 @@ riscv_set_arch (const char *s)
 {
   riscv_parse_subset_t rps;
   rps.subset_list = &riscv_subsets;
+  rps.isa_ver = &riscv_isa_ver;
   rps.error_handler = as_fatal;
   rps.xlen = &xlen;
 
   riscv_release_subset_list (&riscv_subsets);
   riscv_parse_subset (&rps, s);
+}
+
+static void
+riscv_set_isa_ver (const char *s)
+{
+  riscv_parse_isa_ver_t rpiv;
+  rpiv.isa_ver = &riscv_isa_ver;
+  rpiv.error_handler = as_fatal;
+
+  //  riscv_isa_ver = RISCV_ISA_VER_NULL;
+  riscv_init_isa_ver_null (&riscv_isa_ver);
+  riscv_parse_isa_ver (&rpiv, s);
 }
 
 /* Handle of the OPCODE hash table.  */
@@ -2152,6 +2171,7 @@ enum options
   OPTION_NO_RELAX,
   OPTION_ARCH_ATTR,
   OPTION_NO_ARCH_ATTR,
+  OPTION_ISA_VER,
   OPTION_END_OF_ENUM
 };
 
@@ -2166,6 +2186,7 @@ struct option md_longopts[] =
   {"mno-relax", no_argument, NULL, OPTION_NO_RELAX},
   {"march-attr", no_argument, NULL, OPTION_ARCH_ATTR},
   {"mno-arch-attr", no_argument, NULL, OPTION_NO_ARCH_ATTR},
+  {"misa-spec", required_argument, NULL, OPTION_ISA_VER},
 
   {NULL, no_argument, NULL, 0}
 };
@@ -2244,6 +2265,10 @@ md_parse_option (int c, const char *arg)
       riscv_opts.arch_attr = FALSE;
       break;
 
+    case OPTION_ISA_VER:
+      riscv_set_isa_ver (arg);
+      break;
+
     default:
       return 0;
     }
@@ -2263,6 +2288,9 @@ riscv_after_parse_args (void)
       else
 	as_bad ("unknown default architecture `%s'", default_arch);
     }
+
+  if (RISCV_ISA_VER_NULL_P (&riscv_isa_ver))
+    riscv_set_isa_ver (default_isa_ver);
 
   if (riscv_subsets.head == NULL)
     riscv_set_arch (xlen == 64 ? "rv64g" : "rv32g");

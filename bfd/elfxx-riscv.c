@@ -1237,7 +1237,29 @@ riscv_parse_std_ext (riscv_parse_subset_t *rps,
   return p;
 }
 
-/* Parsing function for non-standard and supervisor extensions.
+
+/* Deduce, from the input string, which class the given
+   architecture extension name belongs to.  */
+
+static riscv_isa_ext_class_t
+riscv_get_prefix_class (const char *arch)
+{
+  switch (*arch)
+    {
+    case 's':
+      if (strlen (arch) > 1 && arch[1] == 'x')
+	return RV_ISA_CLASS_SX;
+      else
+	return RV_ISA_CLASS_S;
+
+    case 'x': return RV_ISA_CLASS_X;
+    case 'z': return RV_ISA_CLASS_Z;
+    default: return RV_ISA_CLASS_UNKNOWN;
+    }
+}
+
+
+/* Parsing function for arbitrary architecture extensions.
 
    Return Value:
      Points to the end of extensions.
@@ -1246,19 +1268,19 @@ riscv_parse_std_ext (riscv_parse_subset_t *rps,
      `rps`: Hooks and status for parsing subset.
      `march`: Full arch string.
      `p`: Curent parsing position.
-     `ext_type`: What kind of extensions, 'x', 's' or 'sx'.
-     `ext_type_str`: Full name for kind of extension.  */
+     `config`: Specifies parsing rules for this particular
+     parsing run.  */
 
 static const char *
-riscv_parse_sv_or_non_std_ext (riscv_parse_subset_t *rps,
-			       const char *march,
-			       const char *p,
-			       const char *ext_type,
-			       const char *ext_type_str)
+riscv_parse_arch_ext (riscv_parse_subset_t *rps,
+		      const char *march,
+		      const char *p,
+		      const riscv_parse_config_t *config)
 {
   unsigned major_version = 0;
   unsigned minor_version = 0;
-  size_t ext_type_len = strlen (ext_type);
+  const char *last_name;
+  riscv_isa_ext_class_t class;
 
   while (*p)
     {
@@ -1268,12 +1290,9 @@ riscv_parse_sv_or_non_std_ext (riscv_parse_subset_t *rps,
 	  continue;
 	}
 
-      if (strncmp (p, ext_type, ext_type_len) != 0)
-	break;
-
-      /* It's non-standard supervisor extension if it prefix with sx.  */
-      if ((ext_type[0] == 's') && (ext_type_len == 1)
-	  && (*(p + 1) == 'x'))
+      /* Assert that we're parsing the same class of extension.  */
+      class = riscv_get_prefix_class (p);
+      if (class != config->class)
 	break;
 
       char *subset = xstrdup (p);
@@ -1294,6 +1313,38 @@ riscv_parse_sv_or_non_std_ext (riscv_parse_subset_t *rps,
 
       *q = '\0';
 
+      /* Check that the extension name is well-formed.  */
+      if (!config->ext_valid_p (subset))
+	{
+	  rps->error_handler
+	    ("-march=%s: Invalid or unknown %s ISA extension: '%s'",
+	     march, config->prefix_upper, subset);
+	  free (subset);
+	  return NULL;
+	}
+
+      /* Check that the last item is not the same as this.  */
+      last_name = rps->subset_list->tail->name;
+
+      if (!strcasecmp (last_name, subset))
+	{
+	  rps->error_handler ("-march=%s: Duplicate %s ISA extension: \'%s\'",
+			      march, config->prefix_upper, subset);
+	  free (subset);
+	  return NULL;
+	}
+
+      /* Check that we are in alphabetical order within the subset.  */
+      if (!strncasecmp (last_name, config->prefix_lower, 1)
+	  && strcasecmp (last_name, subset) > 0)
+	{
+	  rps->error_handler ("-march=%s: %s ISA extension not in alphabetical order: "
+			      "\'%s\' must come before \'%s\'.",
+			      march, config->prefix_upper, subset, last_name);
+	  free (subset);
+	  return NULL;
+	}
+
       riscv_add_subset (rps->subset_list, subset, major_version, minor_version);
       free (subset);
       p += end_of_version - subset;
@@ -1301,12 +1352,275 @@ riscv_parse_sv_or_non_std_ext (riscv_parse_subset_t *rps,
       if (*p != '\0' && *p != '_')
 	{
 	  rps->error_handler ("-march=%s: %s must seperate with _",
-			      march, ext_type_str);
+			      march, config->prefix_lower);
 	  return NULL;
 	}
     }
 
   return p;
+}
+
+const char * const riscv_std_z_ext_strtab[RISCV_STD_Z_EXT_COUNT] =
+  {
+   "zam", "zifencei",
+   "zicsr",
+   "ztso"
+  };
+
+const char * const riscv_std_s_ext_strtab[RISCV_STD_S_EXT_COUNT] =
+  {
+
+  };
+
+/* Find the index corresponding to the z-extension
+   name `ext'. If not found, return -1.  */
+
+int
+riscv_std_z_ext_index (const char *ext)
+{
+  int i;
+
+  for (i = 0; i < RISCV_STD_Z_EXT_COUNT; ++i)
+    {
+      if (!strcasecmp (ext, riscv_std_z_ext_strtab[i]))
+	return i;
+    }
+
+  return -1;
+}
+
+/* Predicator function for x-prefixed extensions.
+   Anything goes, except the literal 'x'.  */
+
+static int
+riscv_ext_x_valid_p (const char *arg)
+{
+  if (!strcasecmp (arg, "x"))
+    return 0;
+
+  return 1;
+}
+
+/* Predicator functions for z-prefixed extensions.
+   Only known z-extensions are permitted.  */
+
+ATTRIBUTE_UNUSED static int
+riscv_ext_z_valid_p (const char *arg)
+{
+  const size_t tabsize = ARRAY_SIZE (riscv_std_z_ext_strtab);
+
+  for (size_t i = 0; i < tabsize; ++i)
+    {
+      if (!strcasecmp (arg, riscv_std_z_ext_strtab[i]))
+	return 1;
+    }
+
+  return 0;
+}
+
+/* Predicator function for 's' prefixed extensions.
+   Must be either literal 's', or a known s-prefixed extension.  */
+
+static int
+riscv_ext_s_valid_p (const char *arg)
+{
+  const size_t tabsize = ARRAY_SIZE (riscv_std_s_ext_strtab);
+
+  if (strlen (arg) == 1 && *arg == 's')
+    return 1;
+
+  for (size_t i = 0; i < tabsize; ++i)
+    {
+      if (!strcasecmp (arg, riscv_std_s_ext_strtab[i]))
+	return 1;
+    }
+
+  return 0;
+}
+
+/* Predicator function for 'sx' prefixed extensions.
+   Anything goes, except the literal 'sx'.  */
+
+static int
+riscv_ext_sx_valid_p (const char *arg)
+{
+  if (!strcasecmp (arg, "sx"))
+    return 0;
+
+  return 1;
+}
+
+/* Standard parsing order that is currently used.
+   If the ISA spec changes parsing order, we can
+   just add a new table, and select it at run-time
+   depending on the flags.  */
+
+static const riscv_parse_config_t config0[] =
+  {
+   {RV_ISA_CLASS_X, "x", "X", riscv_ext_x_valid_p},
+   {RV_ISA_CLASS_S, "s", "S", riscv_ext_s_valid_p},
+   {RV_ISA_CLASS_SX, "sx", "SX", riscv_ext_sx_valid_p},
+   {RV_ISA_CLASS_UNKNOWN, NULL, NULL, NULL}
+  };
+
+/* Below is an example of the currenty proposed
+   parsing order for the latest draft as of 2019/07/02.  */
+
+static const riscv_parse_config_t config1[] =
+  {
+   {RV_ISA_CLASS_S, "s", "S", riscv_ext_s_valid_p},
+   {RV_ISA_CLASS_SX, "sx", "SX", riscv_ext_sx_valid_p},
+   //   {RV_ISA_CLASS_Z, "z", "Z", riscv_ext_z_valid_p},
+   {RV_ISA_CLASS_X, "x", "X", riscv_ext_x_valid_p},
+   {RV_ISA_CLASS_UNKNOWN, NULL, NULL, NULL}
+  };
+
+
+/* Table specifying the different version variants, and
+   the corresponding parsing order that the entry corresponds to.
+   Keep this table sorted by date.  */
+
+static const riscv_isa_spec_t spectab[] =
+  {
+   /* I don't actually know the date of the 2.2 spec...  */
+   { {TRUE, 2, 2, 20160505} , config0, ARRAY_SIZE (config0) },
+   { {TRUE, 2, 3, 40000101} , config1, ARRAY_SIZE (config1) },
+   /* Some examples:
+
+   (i dont know the exact date)
+   {TRUE, 2, 1, xxxxyyzz, config1, ARRAY_SIZE (config1)}
+
+   (development versions don't need major-minor numbers)
+   {FALSE, 0, 0, 20190702, config2, ARRAY_SIZE (config2)}
+
+   {TRUE, 2, 2, xxxxyyzz, config3, ARRAY_SIZE (config3)}
+   */
+  };
+
+/* Parse the `ver' structure,
+   and return the pointer to a `riscv_isa_spec_t' that corresponds to it. */
+
+static const riscv_isa_spec_t *
+riscv_find_spec_for_isa_ver (const riscv_isa_ver_t *ver ATTRIBUTE_UNUSED)
+{
+  size_t i;
+
+  if (ver->release_p)
+    {
+      for (i = 0; i < ARRAY_SIZE (spectab); ++i)
+	{
+	  if (spectab[i].ver.release_p
+	      && ver->major == spectab[i].ver.major
+	      && ver->minor == spectab[i].ver.minor)
+	    {
+	      return &spectab[i];
+	    }
+	}
+    }
+  else
+    {
+      for (i = 0; i < ARRAY_SIZE (spectab); ++i)
+	{
+	  if (!(spectab[i].ver.release_p)
+	      && ver->date == spectab[i].ver.date)
+	    {
+	      return &spectab[i];
+	    }
+	}
+    }
+
+  return NULL;
+}
+
+#define RISCV_ISA_VER_KNOWN_P(X)		\
+  (riscv_find_spec_for_isa_ver (X) != NULL)
+
+/* Parsing isa version.
+
+   Return Value:
+     Points to the end of version
+
+   Arguments:
+*/
+
+bfd_boolean
+riscv_parse_isa_ver (riscv_parse_isa_ver_t *rpiv,
+		     const char *misa_ver)
+{
+  riscv_isa_ver_t ver;
+
+  bfd_boolean major_p = TRUE;
+  unsigned version = 0;
+  unsigned major = 0;
+  unsigned minor = 0;
+  char np;
+  const char *p = misa_ver;
+
+  for (;*p; ++p)
+    {
+      if (*p == '.')
+	{
+	  np = *(p + 1);
+
+	  if (!ISDIGIT (np))
+	    {
+	      rpiv->error_handler ("-misa-ver=%s: Expect number after `%d.'.",
+				   misa_ver, version);
+	      return FALSE;
+	    }
+
+	  major = version;
+	  major_p = FALSE;
+	  version = 0;
+	}
+      else if (ISDIGIT (*p))
+	version = (version * 10) + (*p - '0');
+      else
+	break;
+    }
+
+  if (major_p)
+    major = version;
+  else
+    minor = version;
+
+  ver.release_p = TRUE;
+  ver.major = major;
+  ver.minor = minor;
+  ver.date = 0;
+
+  /* Check that this actually exists in our `spectab` table.  */
+  if (!RISCV_ISA_VER_KNOWN_P (&ver))
+    {
+      rpiv->error_handler ("-misa-ver=%s: Unknown ISA spec version `%i.%i'.",
+			   misa_ver, ver.major, ver.minor);
+      return FALSE;
+    }
+
+  /* Ok, commit the entry.  */
+  *rpiv->isa_ver = ver;
+
+
+  return TRUE;
+}
+
+/* Return pointer to the latest version.  */
+
+ATTRIBUTE_UNUSED
+static const riscv_isa_ver_t *
+riscv_latest_isa_ver (void)
+{
+  /* Last index always has the newest version.  */
+  return &spectab[ ARRAY_SIZE (spectab) - 1 ].ver;
+}
+
+void
+riscv_init_isa_ver_null (riscv_isa_ver_t *isa_ver)
+{
+  isa_ver->release_p = FALSE;
+  isa_ver->major = 0;
+  isa_ver->minor = 0;
+  isa_ver->date = 0;
 }
 
 /* Function for parsing arch string.
@@ -1322,6 +1636,10 @@ bfd_boolean
 riscv_parse_subset (riscv_parse_subset_t *rps,
 		    const char *arch)
 {
+  /* TODO: This can be a function argument in the future.  */
+  const riscv_isa_ver_t *ver = rps->isa_ver;
+  const riscv_isa_spec_t *spec = riscv_find_spec_for_isa_ver (ver);
+
   const char *p = arch;
 
   if (strncmp (p, "rv32", 4) == 0)
@@ -1341,32 +1659,25 @@ riscv_parse_subset (riscv_parse_subset_t *rps,
       return FALSE;
     }
 
-  /* Parsing standard extension.  */
+    /* Parsing standard extension.  */
   p = riscv_parse_std_ext (rps, arch, p);
 
   if (p == NULL)
     return FALSE;
 
-  /* Parsing non-standard extension.  */
-  p = riscv_parse_sv_or_non_std_ext (
-	rps, arch, p, "x", "non-standard extension");
+  /* Parsing all other extensions: The extensions and parsing order
+     is ISA spec-dependant, and so we do this programmatically here.  */
 
-  if (p == NULL)
-    return FALSE;
+  int i;
+  const riscv_parse_config_t *config;
 
-  /* Parsing supervisor extension.  */
-  p = riscv_parse_sv_or_non_std_ext (
-	rps, arch, p, "s", "supervisor extension");
+  for (i = 0; i < spec->parse_count; ++i) {
+    config = &spec->parse_order[i];
+    p = riscv_parse_arch_ext (rps, arch, p, config);
 
-  if (p == NULL)
-    return FALSE;
-
-  /* Parsing non-standard supervisor extension.  */
-  p = riscv_parse_sv_or_non_std_ext (
-	rps, arch, p, "sx", "non-standard supervisor extension");
-
-  if (p == NULL)
-    return FALSE;
+    if (p == NULL)
+      return FALSE;
+  }
 
   if (*p != '\0')
     {

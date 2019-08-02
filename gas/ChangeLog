@@ -1,3 +1,38 @@
+2019-08-08  Maxim Blinov  <maxim.blinov@embecosm.com>
+	* config/tc-riscv.c (OPTION_ISA_VER): New flag "-misa-spec".
+	(DEFAULT_ISA_VER): New define.
+	(riscv_set_arch): Also pass riscv_isa_ver.
+	(riscv_set_isa_ver): New function.
+	(md_parse_option): Also handle OPTION_ISA_VER.
+	(riscv_after_parse_args): Set default ISA if none set.
+	* bfd/elfxx-riscv.h (riscv_isa_ext_class): New enum.
+	(riscv_parse_config_t): New structure.
+	(riscv_isa_ver_t): New structure.
+	(riscv_init_isa_ver_null): Declare.
+	(riscv_parse_subset_t): Add member "isa_ver".
+	(riscv_parse_isa_ver_t): New structure.
+	(riscv_parse_isa_ver): Declare.
+	(riscv_std_z_ext_index): Declare.
+	(riscv_isa_spec_t): New structure;
+	* bfd/elfxx-riscv.c (riscv_get_prefix_class): New function.
+	(riscv_parse_arch_ext): Renamed from "riscv_parse_sv_or_non_std_ext".
+	Make parsing behaviour and error messages dependant on new
+	"config" parameter.
+	(riscv_std_z_ext_strtab): New string table.
+	(riscv_std_s_ext_strtab): Likewise.
+	(riscv_std_z_ext_index): New function.
+	(riscv_ext_x_valid_p): New predicator.
+	(riscv_ext_z_valid_p): Likewise.
+	(riscv_ext_s_valid_p): Likewise.
+	(riscv_ext_sx_valid_p): Likewise.
+	(config0): New parsing order table.
+	(config1): Likewise.
+	(spectab): ISA Spec table for parsing order selection.
+	(riscv_find_spec_for_isa_ver): New function.
+	(riscv_parse_isa_ver): New function.
+	(riscv_parse_subset): Handle different parsing order
+	for different ISA spec versions.
+
 2019-08-05  Barnaby Wilks  <barnaby.wilks@arm.com>
 
 	* config/tc-arm.c (do_mve_vqdmlah): Use N_S_32 macro.
