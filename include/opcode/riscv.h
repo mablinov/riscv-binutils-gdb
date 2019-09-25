@@ -311,6 +311,7 @@ enum riscv_insn_class
    INSN_CLASS_Q,
 
    INSN_CLASS_B,
+   INSN_CLASS_ZBT,
    INSN_CLASS_B_OR_ZBB,
    INSN_CLASS_B_OR_ZBB_OR_ZBP,
    INSN_CLASS_B_OR_ZBC,
